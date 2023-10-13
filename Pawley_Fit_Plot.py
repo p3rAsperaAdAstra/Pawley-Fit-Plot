@@ -5,27 +5,21 @@ from glob import glob
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
 from matplotlib.ticker import AutoMinorLocator,MultipleLocator
-from matplotlib.lines import Line2D
-from matplotlib import font_manager
-from matplotlib.legend import DraggableLegend
-from matplotlib import rcParams
 
 # Notes:
 	# important code parts are highlighted with "CRITICAL!!!"
 
 # DONE: 
 	# Adapt args names.
-	# File-finder has been revamped. Should work a lot better now. 
+	# File-finder has been revamped. Should work a lot better now.
+	# data reader is finished. 
 
 # TODO:
 	# check behavior for legend_columns: Crashes on ncol > nvals?
-	# check if every files_dict entry has four entries.
+	# implement class for plotting a single file first
 
-# implement class for plotting a single file first
-
-# Set global font
-rcParams['font.family'] = ['Arial']
 
 sinfo = 'Plots the result of a TOPAS Pawley fit using the following output files: X_Yobs, X_Ycalc, X_Difference, 2Th_Ip.'
 sname = os.path.basename(__file__)
@@ -91,156 +85,7 @@ parser.add_argument('-vstr','--vline_strength', type=float, default=defaults['vl
 args = parser.parse_args()
 
 
-
-
-def read_file_group(group_name):
-	
-
-	X_Yobs  = pd.read_csv(r'%s%s'%(group_name,'_pawley_01_X_Yobs.txt'), 
-                           delim_whitespace=True,
-                           header=None,
-                           names=['angle','intensity'],
-                           dtype={'angle':np.float64,'intensity':np.float64},
-                           decimal='.')
-	X_Ycalc = pd.read_csv(r'%s%s'%(group_name,'_pawley_01_Out_X_Ycalc.txt'), 
-                           delim_whitespace=True,
-                           header=None,
-                           names=['angle','intensity'],
-                           dtype={'angle':np.float64,'intensity':np.float64},
-                           decimal='.')
-	Th_Ip  = pd.read_csv(r'%s%s'%(group_name,'_pawley_01_2Th_Ip.txt'), 
-                          delim_whitespace=True,
-                          header=None,
-                          names=['angle','intensity'],
-                          dtype={'angle':np.float64,'intensity':np.float64},
-                          decimal='.')
-	X_Difference = pd.read_csv(r'%s%s'%(group_name,'_pawley_01_X_Difference.txt'), 
-                            	delim_whitespace=True,
-                            	header=None,
-                            	names=['angle','intensity'],
-                            	dtype={'angle':np.float64,'intensity':np.float64},
-                            	decimal='.')
-
-	return X_Yobs,X_Ycalc,Th_Ip,X_Difference
-
-
-
-
-
-
-
-# plotter 
-def plot_group(X_Yobs,X_Ycalc,Th_Ip,X_Difference,group,index,number_of_groups):
-
-	X_Yobs_1, X_Yobs_2 = X_Yobs['angle'].to_numpy(), X_Yobs['intensity'].to_numpy()
-	X_Ycalc_1, X_Ycalc_2 = X_Ycalc['angle'].to_numpy(), X_Ycalc['intensity'].to_numpy()
-	Th_Ip_1, Th_Ip_2 = Th_Ip['angle'].to_numpy(), Th_Ip['intensity'].to_numpy()
-	X_Difference_1, X_Difference_2 = X_Difference['angle'].to_numpy(), X_Difference['intensity'].to_numpy()
-
-	minimum_y = min(X_Yobs_2.min(),X_Ycalc_2.min())
-	maximum_y = max(X_Yobs_2.max(),X_Ycalc_2.max())
-	minimum_x = min(X_Yobs_1.min(),X_Ycalc_1.min())
-	maximum_x = max(X_Yobs_1.max(),X_Ycalc_1.max())
-	ylength = abs(maximum_y-minimum_y)
-	xlength = abs(maximum_x-minimum_x)
- 
-	diff_length = abs(max(X_Difference_2.max(),X_Difference_2.max())-min(X_Difference_2.min(),X_Difference_2.min()))
-
-	Th_Ip_2 = np.zeros(Th_Ip_1.shape[0])
-
-	fig, (ax1,ax2,ax3) = plt.subplots(figsize=args.plot_size,ncols=1,nrows=3,gridspec_kw={'height_ratios': [1,0.1,diff_length/ylength]})
-
-	fig.subplots_adjust(hspace=0.)
-
-	ax1.set_xlim(minimum_x-args.xtolerance,maximum_x+args.xtolerance)
-	ax2.set_xlim(minimum_x-args.xtolerance,maximum_x+args.xtolerance)
-	ax3.set_xlim(minimum_x-args.xtolerance,maximum_x+args.xtolerance)
-
-	mult_lower = min(range(len(X_Yobs_1)), key=lambda i: abs(X_Yobs_1[i]-args.multi_range[0]))
-	mult_upper = min(range(len(X_Yobs_1)), key=lambda i: abs(X_Yobs_1[i]-args.multi_range[1]))
-
-	X_Yobs_2[:mult_lower] *= args.multi_range[2]
-	X_Yobs_2[mult_upper:] *= args.multi_range[2]
-
-	X_Ycalc_2[:mult_lower] *= args.multi_range[2]
-	X_Ycalc_2[mult_upper:] *= args.multi_range[2]
-
-	ax1.plot(X_Yobs_1,X_Yobs_2,args.format_style,lw=0.4,c=args.color_exp,zorder=0,markersize=args.x_size)
-	ax1.plot(X_Ycalc_1,X_Ycalc_2,lw=2,c=args.color_cal)
-	ax2.scatter(Th_Ip_1,Th_Ip_2,s=args.dash_size,c=args.color_pos,marker='|',linewidth=0.5)
-	ax3.plot(X_Difference_1,X_Difference_2,lw=0.4,c=args.color_dif)
-
-	ax1.xaxis.set_major_locator(MultipleLocator(args.x_step_width))
-	ax1.xaxis.set_minor_locator(AutoMinorLocator())
-	ax3.xaxis.set_major_locator(MultipleLocator(args.x_step_width))
-	ax3.xaxis.set_minor_locator(AutoMinorLocator())
-	
-	fig.text(0.11, 0.5, r'$'+args.y_label+r'$',size=args.size_labels,va='center',rotation='vertical',ha='right')
-
-	# only if -mult is activated.
-	if args.multi_range[0] != args.multi_range[1]:
-		text_x = args.multi_range[1]+(ax1.get_xlim()[1]-ax1.get_xlim()[0])*0.01
-		text_y = ax1.get_ylim()[1]-(ax1.get_ylim()[1]-ax1.get_ylim()[0])*0.03
-		ax1.text(text_x,text_y,'x %s'%args.multi_range[2],size=args.size_multiple,va='top',ha='left',rotation='horizontal')
-		
-		# Get formatting for vertical lines (line styles)
-
-		vline_style = line_style_converter(args.vertical_style)
-
-		ax1.axvline(x=args.multi_range[0],c='k',lw=args.vertical_strength,ls=vline_style)
-		ax1.axvline(x=args.multi_range[1],c='k',lw=args.vertical_strength,ls=vline_style)
-		ax2.axvline(x=args.multi_range[0],c='k',lw=args.vertical_strength,ls=vline_style)
-		ax2.axvline(x=args.multi_range[1],c='k',lw=args.vertical_strength,ls=vline_style)
-		ax3.axvline(x=args.multi_range[0],c='k',lw=args.vertical_strength,ls=vline_style)
-		ax3.axvline(x=args.multi_range[1],c='k',lw=args.vertical_strength,ls=vline_style)
-
-	ax3.set_xlabel(r'$'+args.x_label+r'$',size=args.size_labels)
-
-	ax1.spines['bottom'].set_visible(False)
-	ax2.spines['top'].set_visible(False)
-	ax2.spines['bottom'].set_visible(False)
-	ax3.spines['top'].set_visible(False)
-
-	ax1.tick_params(axis='both',which='both',left=False,labelleft=False,bottom=False,labelbottom=False,direction='in',top=True,labeltop=False)
-	ax2.tick_params(axis='both',which='both',left=False,labelleft=False,bottom=False,labelbottom=False,direction='in')
-	ax3.tick_params(axis='both',which='both',left=False,labelleft=False,direction='in',labelsize=args.size_ticks)
-
-
-	legend_marker_exp = Line2D([0], [0], color='w',markeredgecolor=args.color_exp,marker='x',markersize=8)
-
-	if args.format_style == '-':
-		legend_marker_exp = Line2D([0], [0], color=args.color_exp,lw=2)
-	elif args.format_style == 'x-':
-		legend_marker_exp = Line2D([0], [0], color=args.color_exp,lw=2,markeredgecolor=args.color_exp,marker='x',markersize=8)
-
-	legend_marker_cal = Line2D([0], [0], color=args.color_cal,lw=2)
-	legend_marker_pos = Line2D([0], [0], color='w',markeredgecolor=args.color_pos,marker='|',markersize=10)
-	legend_marker_dif = Line2D([0], [0], color=args.color_dif,lw=2)
-
-	legend_markers = [legend_marker_exp,
-					  legend_marker_cal,
-					  legend_marker_pos,
-					  legend_marker_dif]
-
-	legend = ax1.legend(legend_markers, [args.legend_exp,args.legend_cal,args.legend_pos,args.legend_dif],fontsize=args.size_legend,ncol=args.legend_columns)
-	DraggableLegend(legend)
-
-	#######################################
-	# Plot Info
-	#######################################
-	print('Plot {} out of {}.'.format(index,number_of_groups))
-	print('Name of dataset: {}'.format(group))
-	print('\n')
-
-	if args.silent:
-		plt.savefig('{}.{}'.format(group,args.extension),dpi=args.dots_per_inch,bbox_inches='tight')
-	else:
-		plt.show()
-
-
-
-
-# 1. find files
+# 1. find input files
 def get_input_files(inps='AUTOBATCH'):
 
 	'''Finds the relevant input files based on input string.'''
@@ -284,39 +129,64 @@ def get_input_files(inps='AUTOBATCH'):
 
 
 
-
 # 2. read in input and return data
 def get_data(paths_dict):
 
 	'''Reads in data files and returns the appropriate data arrays/dataframes...we'll see.'''
 
-	# exp_path = paths['X_Yobs']
-	# cal_path = paths['Out_X_Ycalc']
-	# pos_path = paths['2Th_Ip']
-	# dif_path = paths['X_Difference']
+	data = {} # to return
+	names_to_sensible = {'x_yobs':'exp', # i hate the names of the data that TOPAS uses...
+						 'out_x_ycalc':'cal',
+						 'x_difference':'dif',
+						 '2th_ip':'pos'} 
 
 	for typ in paths_dict:
-		pass # AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+		df = pd.read_csv(paths[typ],delim_whitespace=True,header=None,dtype=float)
+		df.columns = ('x','y')
 
+		name = names_to_sensible[typ.lower()] # convert the names of TOPAS to better names.
 
+		data[name] = [df['x'],df['y']]
+
+	return data
 
 
 
 class PlotPawleyFit: # Should I use a parent class?
 
-	def __init__(self,a,b,c,d): # needs the data sets to plot a single graph.
+	def __init__(self,data): # needs the data sets to plot a single graph.
 
-		self.a = a
-		self.b = b 
-		self.c = c
-		self.d = d
+		self.data = data # receive num data for plotting. 
 
 
-	def get_default_plot(self): # need to decide on args for this method.
+	def plot(self): # need to decide on args for this method.
 
 		'''Make the default plot according to directly passable commandline args.'''
 
-		pass
+		fig = plt.figure(figsize=args.plot_size)  # create canvas.
+		gs = gridspec.GridSpec(3, 1, height_ratios=[4, 1, 1]) # make stacked multiplot for exp+cal // pos // dif
+
+		# attribute subplots to variables.
+		ax1 = plt.subplot(gs[0]) # exp+cal
+		ax2 = plt.subplot(gs[1]) # pos
+		ax3 = plt.subplot(gs[2]) # dif
+
+		plt.subplots_adjust(hspace=0.0) # reduce space between subplots to zero
+
+		# plot the different data values.
+		ax1.plot(self.data['exp'][0], self.data['exp'][1], 'kx',label='Observed')
+		ax1.plot(self.data['cal'][0], self.data['cal'][1], label='Calculated')
+		ax2.plot(self.data['pos'][0], np.zeros(len(self.data['pos'][0])), label='Reflections')
+		ax3.plot(self.data['dif'][0], self.data['dif'][1], label='Difference')
+
+		# Hide horizontal lines between subplots
+		ax1.spines['bottom'].set_visible(False)
+		ax2.spines['top'].set_visible(False)
+		ax2.spines['bottom'].set_visible(False)
+		ax3.spines['top'].set_visible(False)
+
+		plt.show()
+
 
 	def add_style(self): 
 
@@ -332,15 +202,15 @@ files_dict = get_input_files(args.input)
 
 for entry in files_dict:
 	paths = files_dict[entry]
-	print(paths)
-	if len(paths) != 4:
+	
+	if len(paths) != 4: # quit if data file missing. check get_input_files() for mistakes.
 		print('ERROR! %s FOUND %s INPUT FILES FOR THE INPUT GROUP %s INSTEAD OF 4!'%(sname,len(paths),entry))
 		sys.exit('Exiting %s...'%sname)
 	
-	data = get_data(paths)
+	data = get_data(paths) # get all the data from the four input files.
 
-# for index,group_name in enumerate(file_groups):
-# 	X_Yobs,X_Ycalc,Th_Ip,X_Difference = read_file_group(group_name)
-# 	plot_group(X_Yobs,X_Ycalc,Th_Ip,X_Difference,group_name,index+1,len(file_groups))
+	plot_obj = PlotPawleyFit(data) # create plot object.
+	plot_obj.plot() # call the plot method.
 
-# print('Exiting {}.'.format(__file__.split('\\')[-1]))
+
+	
