@@ -1,10 +1,12 @@
 import re
 import os
+import sys
 import argparse
 from glob import glob
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 import matplotlib.gridspec as gridspec
 from matplotlib.ticker import AutoMinorLocator,MultipleLocator
 
@@ -26,13 +28,13 @@ sname = os.path.basename(__file__)
 
 defaults = {'input':'AUTOBATCH', # Specify the input for the script to plot.
 			'silent':True, # run in silent mode.
-			'multi_range':(0,0,1), # multiply 2theta angle range by a certain factor (START,END,FAC).
+			'multi_range':None, # multiply 2theta angle range by a certain factor (START,END,FAC).
 			'color_exp':'k', # color for experimental values.
 			'color_cal':'r', # color for theoretical values.
 			'color_pos':'b', # color for predicted reflection position values.
 			'color_dif':'g', # color for experimental/theoretical values difference.
 			'marker_exp_size':6, # size of black X-markers of the experimental data.
-			'marker_pos_size':50, # size of the blue dashes for predicted reflection position values.
+			'marker_pos_size':10, # size of the blue dashes for predicted reflection position values.
 			'plot_size':(6,4), # set the size of the plot.
 			'dots_per_inch':600, 
 			'extension':'svg', # default output type in silent mode is svg.
@@ -41,14 +43,13 @@ defaults = {'input':'AUTOBATCH', # Specify the input for the script to plot.
 			'legend_text_pos':'Reflections', # set the legend text for the predicted reflection position values. 
 			'legend_text_dif':'Difference', # set the legend text for experimental/theoretical values difference.
 			'legend_columns':1, # number of columns in the legend. 
-			'size_axis_labels':12, # size of x/y-axis labels.
+			'size_axis_labels':11, # size of x/y-axis labels.
 			'size_legend_labels':12, # size of the legend labels.
-			'size_tick_labels':12, # size of axis tick labels.
+			'size_tick_labels':10, # size of axis tick labels.
 			'size_multiply_label':12, # size of the multiplication number.
-			'x_label_text':r'2\theta \quad / \quad°', # label for the x axis.
-			'y_label_text':r'\mathrm{Intensity} \quad / \quad \mathrm{arb. units}', # label for the y axis.
-			'x_step_width':10, # step size of the x axis (2theta angles)
-			'x_axis_tolerance':0, # specify the tolerance of the x axis in angles.
+			'x_label_text':r'$2\theta \quad / \quad°$', # label for the x axis.
+			'y_label_text':'Intensity  /  a.u.', # label for the y axis.
+			'x_step_width':5, # step size of the x axis (2theta angles)
 			'vline_style':'-', # vertical multiply line style.
 			'vline_strength':0.6 # strength of the vertical multiply line.
 			}
@@ -56,8 +57,8 @@ defaults = {'input':'AUTOBATCH', # Specify the input for the script to plot.
 # command line arguments.
 parser = argparse.ArgumentParser(description=sinfo)
 parser.add_argument('-i','--input', type=str, nargs='+',default=defaults['input'], help='Specify your input file.')
-parser.add_argument('-s','--silent', action='store_true', default=False, help='Run in silent mode. This way only pictures are generated without opening a window.')
-parser.add_argument('-m','--multi_range', type=float, nargs='+',default=(-100.,-100.,1), help='Multiply the intensities of the experimental and calculated dataset by a number. The given range of diffraction angles will be EXCLUDED from the multiplication. Specify: \"[START] [END] [FACTOR]\"')
+parser.add_argument('-s','--silent', action='store_true', default=defaults['silent'], help='Run in silent mode. This way only pictures are generated without opening a window.')
+parser.add_argument('-m','--multi_range', type=str, nargs='+',default=defaults['multi_range'], help='Multiply the intensities of the experimental and calculated dataset by a number. The given range of diffraction angles will be EXCLUDED from the multiplication. Specify: \"[START] [END] [FACTOR]\"')
 parser.add_argument('-cexp','--color_exp', type=str, default=defaults['color_exp'], help='Set the color for experimental values: (_pawley_01_X_Yobs).')
 parser.add_argument('-ccal','--color_cal', type=str, default=defaults['color_cal'], help='Set the color for calculated values: (_pawley_01_Out_X_Ycalc)')
 parser.add_argument('-cpos','--color_pos', type=str, default=defaults['color_pos'], help='Set the color for X position values: (_pawley_01_2Th_Ip)')
@@ -79,7 +80,6 @@ parser.add_argument('-smul','--size_multiply_label', type=int, default=defaults[
 parser.add_argument('-xlab','--x_label_text', type=str, default=defaults['x_label_text'], help='Specify the x label. This option evaluates LaTeX code so that Greek letters can be specified as well (e.g. \\Delta). Most basic math mode codes should be recognized, but not all. ALWAYS surround LaTeX code with Quotes (\").')
 parser.add_argument('-ylab','--y_label_text', type=str, default=defaults['y_label_text'], help='Specify the y label. This option evaluates LaTex code so that Greek letters can be specified as well (e.g. \\Delta). Most basic math mode codes should be recognized, but not all. ALWAYS surround LaTeX code with Quotes (\").')
 parser.add_argument('-xstep','--x_step_width', type=int, default=defaults['x_step_width'], help='Specify the step width of the x axis.')
-parser.add_argument('-xtol','--x_axis_tolerance', type=float, default=defaults['x_axis_tolerance'], help='Specify the tolerance of the x-axis in degrees (absolute values).')
 parser.add_argument('-vsty','--vline_style', type=str, default=defaults['vline_style'], help='Specify the line style of the vertical multiplication lines. Options: do = dotted, da = dashed.')
 parser.add_argument('-vstr','--vline_strength', type=float, default=defaults['vline_strength'], help='Specify the thickness of vertical multiplication lines.')
 args = parser.parse_args()
@@ -91,7 +91,7 @@ def get_input_files(inps='AUTOBATCH'):
 	'''Finds the relevant input files based on input string.'''
 
 	def add_files_to_files_dict(data_files, dirpath, files_dict):
-# 
+
 		'''Fills the files_dict var with entries for the different input files.'''
 
 		for file in data_files:
@@ -151,6 +151,23 @@ def get_data(paths_dict):
 	return data
 
 
+def process_multiplication_tuples(tups):
+
+	'''Process the args.multiple_range arguments into something useable.'''
+
+	# check if format checks out.
+	for mul in tups:
+		try:
+			a,b,m = mul.split(',')
+			if [a,b,m].count('') > 2:
+				print('At least two numbers need to be provided in the multiplication tuple.')
+
+		except ValueError:
+			print('The provided multiplication tuple %s does not contain the correct amount (3) of values.'%mul)
+			sys.exit('Exiting %s'%sname)
+
+
+
 
 class PlotPawleyFit: # Should I use a parent class?
 
@@ -158,13 +175,42 @@ class PlotPawleyFit: # Should I use a parent class?
 
 		self.data = data # receive num data for plotting. 
 
-
 	def plot(self): # need to decide on args for this method.
 
 		'''Make the default plot according to directly passable commandline args.'''
 
+		def plot_style(ax1,ax2,ax3,lims):
+
+			'''Define the style of the plot. A bit weird, but this way it's all in one place.'''
+
+			# Hide horizontal lines between subplots
+			ax1.spines['bottom'].set_visible(False)
+			ax2.spines['top'].set_visible(False)
+			ax2.spines['bottom'].set_visible(False)
+			ax3.spines['top'].set_visible(False)
+
+			# set tick step size
+			ax3.xaxis.set_minor_locator(AutoMinorLocator())
+			ax3.xaxis.set_major_locator(MultipleLocator(args.x_step_width))
+
+			for ax in (ax1,ax2,ax3):
+				ax.set_yticks(()) # remove yticks
+				ax.set_xlim(lims) # set x axis limits 
+			
+			ax1.set_xticks(())
+			ax2.set_xticks(())
+
+			# direction of ticks and size of tick labels
+			ax3.xaxis.set_ticks_position('bottom') 
+			ax3.tick_params(axis='both',which='both',labelsize=args.size_tick_labels, direction='in')
+
+			# axis labels
+			fig.text(0.1, 0.5, args.y_label_text, fontsize=args.size_axis_labels, rotation=90, ha='right', va='center') # add ylabel
+			fig.text(0.5, 0.04, args.x_label_text, fontsize=args.size_axis_labels, va='top', ha='center') # add ylabel
+
+
 		fig = plt.figure(figsize=args.plot_size)  # create canvas.
-		gs = gridspec.GridSpec(3, 1, height_ratios=[4, 1, 1]) # make stacked multiplot for exp+cal // pos // dif
+		gs = gridspec.GridSpec(3, 1, height_ratios=[8, 1, 2]) # make stacked multiplot for exp+cal // pos // dif
 
 		# attribute subplots to variables.
 		ax1 = plt.subplot(gs[0]) # exp+cal
@@ -174,25 +220,41 @@ class PlotPawleyFit: # Should I use a parent class?
 		plt.subplots_adjust(hspace=0.0) # reduce space between subplots to zero
 
 		# plot the different data values.
-		ax1.plot(self.data['exp'][0], self.data['exp'][1], 'kx',label='Observed')
-		ax1.plot(self.data['cal'][0], self.data['cal'][1], label='Calculated')
-		ax2.plot(self.data['pos'][0], np.zeros(len(self.data['pos'][0])), label='Reflections')
-		ax3.plot(self.data['dif'][0], self.data['dif'][1], label='Difference')
+		ax1.plot(self.data['exp'][0], self.data['exp'][1], ls='' ,marker='x', mew=.6, ms=args.marker_exp_size, color=args.color_exp, label='Observed')
+		ax1.plot(self.data['cal'][0], self.data['cal'][1], lw=1, ls='-' ,marker='', color=args.color_cal, label='Calculated')
+		ax2.plot(self.data['pos'][0], np.zeros(len(self.data['pos'][0])), ls='' ,marker='|',mew=.3, ms=args.marker_pos_size, color=args.color_pos, label='Reflections')
+		ax3.plot(self.data['dif'][0], self.data['dif'][1], lw=0.3, ls='-' ,marker='', color=args.color_dif, label='Difference')
 
-		# Hide horizontal lines between subplots
-		ax1.spines['bottom'].set_visible(False)
-		ax2.spines['top'].set_visible(False)
-		ax2.spines['bottom'].set_visible(False)
-		ax3.spines['top'].set_visible(False)
+		# formatting
+		lims = min(self.data['exp'][0]), max(self.data['exp'][0])
+		plot_style(ax1,ax2,ax3,lims) # set plot style
 
-		plt.show()
+		# add legend
+		ax1.legend([Line2D([0], [0], ls='', marker='x', c=args.color_exp, lw=1),
+					Line2D([0], [0], c=args.color_cal, lw=1),
+					Line2D([0], [0], ls='', marker='|', ms=args.marker_pos_size, c=args.color_pos, lw=1),
+					Line2D([0], [0], c=args.color_dif, lw=1)],
+					[args.legend_text_exp,
+					 args.legend_text_cal,
+					 args.legend_text_pos,
+					 args.legend_text_dif])
+
+		self.axes = (ax1,ax2,ax3)
+
+		return self.axes
 
 
-	def add_style(self): 
+	def add_multiply(self,tups):
 
-		'''Will add formatting options to the produced plot.'''
+		'''Add multiplication vlines.'''
 
-		pass
+		
+
+
+
+		for ax in self.axes: # add the vlines
+			ax.axvline(10,-100,100, ls=args.vline_style, lw=args.vline_strength, color='k')
+
 
 
 
@@ -211,6 +273,21 @@ for entry in files_dict:
 
 	plot_obj = PlotPawleyFit(data) # create plot object.
 	plot_obj.plot() # call the plot method.
+
+	# run silent or open window bases on args.
+	filename = entry+'.'+args.extension
+	if args.silent:
+		plt.savefig(filename,dpi=args.dots_per_inch ,bbox_inches='tight', transparent=True)
+	else:
+		plt.show()
+
+	# add a multiplication line if args.mult != None.
+	if args.multi_range:
+		# check here if mult provided fulfils format requirements.
+		print(args.multi_range)
+		plot_obj.add_multiply(args.multi_range)
+
+	plt.clf() # close figure after processing to free up memory.
 
 
 	
