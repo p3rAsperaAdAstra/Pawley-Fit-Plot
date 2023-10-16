@@ -10,6 +10,9 @@ import matplotlib.gridspec as gridspec
 from matplotlib.ticker import AutoMinorLocator,MultipleLocator
 
 # NEED TO SWITCH POSITION OF MULT LABEL IF NO END SPECIFIED!
+# WORST CASE SCENARIO: Replot entire plot if mult is used.
+	# Do not plot at all until mult is run?
+
 
 # Notes:
 	# important code parts are highlighted with "CRITICAL!!!"
@@ -57,7 +60,7 @@ defaults = {'input':'AUTOBATCH', # Specify the input for the script to plot.
 
 # command line arguments.
 parser = argparse.ArgumentParser(description=sinfo)
-parser.add_argument('-i','--input', type=str, nargs='+',default=defaults['input'], help='Specify your input file.')
+parser.add_argument('-i','--input', type=str, nargs='+',default=defaults['input'], help='Specify your input file(s).')
 parser.add_argument('-s','--silent', action='store_true', default=defaults['silent'], help='Run in silent mode. This way only pictures are generated without opening a window.')
 parser.add_argument('-m','--multi_range', type=str, nargs='+',default=defaults['multi_range'], help='Multiply the intensities of the experimental and calculated dataset by a number. The given range of diffraction angles will be EXCLUDED from the multiplication. Specify: \"[START] [END] [FACTOR]\"')
 parser.add_argument('-cexp','--color_exp', type=str, default=defaults['color_exp'], help='Set the color for experimental values: (_pawley_01_X_Yobs).')
@@ -121,9 +124,12 @@ def get_input_files(inps='AUTOBATCH'):
 
 			# run this if boolean check didn't call sys.exit(). 
 			dirname = os.path.dirname(inp)
+
+			if dirname == '': dirname = '.'
+
 			file = os.path.basename(inp)
 			filename = os.path.splitext(file)[0]
-			data_files = [file for file in os.listdir(dirname) if filename in file and os.path.splitext(file)[-1] == '.txt']
+			data_files = [file for file in os.listdir(dirname) if '_pawley_' in file and os.path.splitext(file)[-1] == '.txt']
 			add_files_to_files_dict(data_files,dirname,files_dict)
 	
 	return files_dict
@@ -156,8 +162,10 @@ def process_multiplication_tuples(tups):
 
 	'''Process the args.multiple_range arguments into something useable.'''
 
-	# check if format checks out.
+	# check if tups is none.
+	if tups == None: return None
 
+	# check if format checks out.
 	mults = []
 	for mul in tups:
 		try:
@@ -200,9 +208,69 @@ def process_multiplication_tuples(tups):
 
 class PlotPawleyFit: # Should I use a parent class?
 
-	def __init__(self,data): # needs the data sets to plot a single graph.
+	def __init__(self,data,mults=None): # needs the data sets to plot a single graph.
 
 		self.data = data # receive num data for plotting. 
+		self.mults = mults
+
+		if self.mults != None: # update data dict before plotting. No tracking of original data, just overwrite.
+			for mul in self.mults:
+				self.data = self.multiply(self.data,mul) # multiply the data according to mul
+
+		self.height_ratios = self.get_height_ratios(data)
+
+
+	def multiply(self,data,mul):
+		
+			'''Actually multiplies the values of the data by m in the range between a and b.'''
+
+			a,b,m = mul
+			x = data['exp'][0] # x data full.
+			mask = np.where((a<=x) & (x<=b)) # find out where x is bigger than a and smaller than b
+			
+			for dataset in ('exp','cal','dif'): # multiply the data in place
+				data[dataset][1][mask[0]] *= m
+
+			return data
+
+
+	def get_height_ratios(self,data):
+
+			'''Determines the vertical proportions of the calc/exp axes and the diff axes so that they have the same absolute scale per pixel.'''
+
+			min_1 = min(data['exp'][1].min(),data['cal'][1].min())
+			max_1 = max(data['exp'][1].max(),data['cal'][1].max())
+			min_3,max_3 = data['dif'][1].min(),data['dif'][1].max()
+
+			d1 = max_1 - min_1
+			d3 = max_3 - min_3
+
+			r = d3/d1
+
+			v3 = 9*r
+			v1 = 9-v3
+
+			return (v1,1,v3)
+
+
+	def add_mults(self):
+
+		'''Add multiplication vlines.'''
+
+		if self.mults == None:
+			return
+	
+		for mul in self.mults:
+			a,b,m = mul # get mul vals
+
+			for ax in self.axes:
+				ax.axvline(a, ls=args.vline_style, lw=args.vline_strength, color='k')
+				ax.axvline(b, ls=args.vline_style, lw=args.vline_strength, color='k')
+			
+			l,h = self.axes[0].get_ylim()
+			self.axes[0].text(a,h*0.95,r'$\times%s$'%m, va='top', ha='left')
+
+
 
 	def plot(self): # need to decide on args for this method.
 
@@ -231,8 +299,6 @@ class PlotPawleyFit: # Should I use a parent class?
 			ax1.tick_params(which='both', bottom=False, top=True, labelbottom=False ,labeltop=False, direction='in')
 			ax2.set_xticks(())
 
-
-
 			# direction of ticks and size of tick labels
 			ax3.xaxis.set_ticks_position('bottom') 
 			ax3.tick_params(axis='both',which='both',labelsize=args.size_tick_labels, direction='in')
@@ -242,10 +308,9 @@ class PlotPawleyFit: # Should I use a parent class?
 			fig.text(0.5, 0.04, args.x_label_text, fontsize=args.size_axis_labels, va='top', ha='center') # add ylabel
 
 
-		v1,v3 = self.get_vertical_proportions(data) # vertical scaling of ax1 and ax3 so that they have the same absolute scales.
 
 		fig = plt.figure(figsize=args.plot_size)  # create canvas.
-		gs = gridspec.GridSpec(3, 1, height_ratios=[v1, 1, v3]) # make stacked multiplot for exp+cal // pos // dif
+		gs = gridspec.GridSpec(3, 1, height_ratios=self.height_ratios) # make stacked multiplot for exp+cal // pos // dif
 
 		# attribute subplots to variables.
 		ax1 = plt.subplot(gs[0]) # exp+cal
@@ -264,7 +329,7 @@ class PlotPawleyFit: # Should I use a parent class?
 		lims = min(self.data['exp'][0]), max(self.data['exp'][0])
 		plot_style(ax1,ax2,ax3,lims) # set plot style
 
-		# add legend
+		# add legend (always on)
 		ax1.legend([Line2D([0], [0], ls='', marker='x', c=args.color_exp, lw=1),
 					Line2D([0], [0], c=args.color_cal, lw=1),
 					Line2D([0], [0], ls='', marker='|', ms=args.marker_pos_size, c=args.color_pos, lw=1),
@@ -272,73 +337,11 @@ class PlotPawleyFit: # Should I use a parent class?
 					[args.legend_text_exp,
 					 args.legend_text_cal,
 					 args.legend_text_pos,
-					 args.legend_text_dif])
+					 args.legend_text_dif],
+					 ncol=args.legend_columns)
 
-		self.gs = gs # return the gs so that it can be modified by the add_multiply method.
-		self.axes = (ax1,ax2,ax3) # make axes values so that they can be called by add_multiply method.
+		self.axes = (ax1,ax2,ax3) # return axes so that they can be accessed by self.add_multiply()
 
-		return self.axes
-
-
-
-	def get_vertical_proportions(self,data):
-
-			'''Determines the vertical proportions of the calc/exp axes and the diff axes so that they have the same absolute scale per pixel.'''
-
-			min_1 = min(data['exp'][1].min(),data['cal'][1].min())
-			max_1 = max(data['exp'][1].max(),data['cal'][1].max())
-			min_3,max_3 = data['dif'][1].min(),data['dif'][1].max()
-
-			d1 = max_1 - min_1
-			d3 = max_3 - min_3
-
-			r = d3/d1
-
-			v3 = 9*r
-			v1 = 9-v3
-
-			return v1,v3
-
-
-	def add_multiply(self,mults):
-
-		'''Add multiplication vlines.'''
-
-		def multiply(line,a,b,m):
-		
-			'''Actually multiplies the values of a line by m in the range between a and b.'''
-
-			x,y = line.get_data() # data for exp vals in ax1
-			mask = np.where((a<=x) & (x<=b)) # find out where x is bigger than a and smaller than b
-			y[mask] *= m
-			line.set_data(x,y)
-			
-		for mul in mults:
-			a,b,m = mul # get mul vals
-			exp = self.axes[0].lines[0]
-			cal = self.axes[0].lines[1]
-			dif = self.axes[2].lines[0]
-
-			for line in (exp,cal,dif):
-				multiply(line,a,b,m)
-			
-			# update data dict after multiplying values.
-			self.data['exp'][1] = exp.get_data()[1]
-			self.data['cal'][1] = cal.get_data()[1]
-			self.data['dif'][1] = dif.get_data()[1]
-
-			for ax in self.axes:
-				ax.axvline(a, ls=args.vline_style, lw=args.vline_strength, color='k')
-				ax.axvline(b, ls=args.vline_style, lw=args.vline_strength, color='k')
-			
-			l,h = self.axes[0].get_ylim()
-			self.axes[0].text(a,h*0.95,r'$\times%s$'%m, va='top', ha='left')
-
-		v1,v3 = self.get_vertical_proportions(self.data)
-		self.gs.set_height_ratios([v1,1,v3])
-
-		for ax in self.axes:
-			ax.autoscale(axis='y')
 
 
 
@@ -353,14 +356,11 @@ for entry in files_dict:
 		sys.exit('Exiting %s...'%sname)
 	
 	data = get_data(paths) # get all the data from the four input files.
-
-	plot_obj = PlotPawleyFit(data) # create plot object.
+	mults = process_multiplication_tuples(args.multi_range) # get mults from input
+	
+	plot_obj = PlotPawleyFit(data,mults) # create plot object.
 	plot_obj.plot() # call the plot method.
-
-	# add a multiplication line if args.mult != None.
-	if args.multi_range:
-		mults = process_multiplication_tuples(args.multi_range) # check here if mult provided fulfils format requirements.
-		plot_obj.add_multiply(mults)
+	plot_obj.add_mults() # add the multiply thingies.
 
 	# run silent or open window bases on args.
 	filename = entry+'.'+args.extension
