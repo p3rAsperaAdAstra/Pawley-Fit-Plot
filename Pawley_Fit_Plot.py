@@ -2,13 +2,14 @@ import re
 import os
 import sys
 import argparse
-from glob import glob
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 import matplotlib.gridspec as gridspec
 from matplotlib.ticker import AutoMinorLocator,MultipleLocator
+
+# NEED TO SWITCH POSITION OF MULT LABEL IF NO END SPECIFIED!
 
 # Notes:
 	# important code parts are highlighted with "CRITICAL!!!"
@@ -156,17 +157,45 @@ def process_multiplication_tuples(tups):
 	'''Process the args.multiple_range arguments into something useable.'''
 
 	# check if format checks out.
+
+	mults = []
 	for mul in tups:
 		try:
 			a,b,m = mul.split(',')
 			if [a,b,m].count('') > 2:
 				print('At least two numbers need to be provided in the multiplication tuple.')
+				sys.exit('Exiting %s'%sname)
+			elif m == '':
+				print('The multiplication value (last element of multiplication tuple) of your tuple (%s) cannot be empty.'%mul)
+				sys.exit('Exiting %s'%sname)
+			else:
+				if a == '': a = '0' # handle tuples in which the start is not specified => start at zero.
+				if b == '': b = '180' # handle tuples in which the end is not specified => end at 180°.
+				dic = {i:float(i) for i in (a,b,m) if i != ''}
+				a,b,m = dic[a],dic[b],dic[m]
+				mults.append((a,b,m))
 
 		except ValueError:
 			print('The provided multiplication tuple %s does not contain the correct amount (3) of values.'%mul)
 			sys.exit('Exiting %s'%sname)
 
+	intra_diffs = [0>(mul[1]-mul[0]) for mul in mults] # if any of these are negative, the user provided a lower b than a, which is not allowed.
+	inter_diffs = [0>(mults[i+1][0]-mults[i][0]) for i in range(len(mults)-1)] # if any of these are negative, some mults overlap, which is not allowed.
+	
+	if any(intra_diffs):
+		inds_wrong = [i for i,val in enumerate(intra_diffs) if val == True]
+		print('Among the multiplication tuples your provided, the mult(s): %s have a upper bound \"b\", which is smaller than the lower bound \"a\".'%' '.join([str(mults[i]) for i in inds_wrong]))
+		print('The syntax of the multiplication tuple requires that a < b.')
+		sys.exit('Exiting %s'%sname)
 
+	if any(inter_diffs):
+		inds_wrong = [i for i,val in enumerate(inter_diffs) if val == True]
+		print('Among the multiplication tuples your provided, the mult(s): %s overlap with the next mult.'%' '.join([str(mults[i]) for i in inds_wrong]))		
+		print('Overlapping multiplication tuples are not allowed.')
+		sys.exit('Exiting %s'%sname)
+
+	# All potentially wrong input taken care of (i think).
+	return mults
 
 
 class PlotPawleyFit: # Should I use a parent class?
@@ -190,15 +219,19 @@ class PlotPawleyFit: # Should I use a parent class?
 			ax3.spines['top'].set_visible(False)
 
 			# set tick step size
-			ax3.xaxis.set_minor_locator(AutoMinorLocator())
+			ax1.xaxis.set_major_locator(MultipleLocator(args.x_step_width))
+			ax1.xaxis.set_minor_locator(AutoMinorLocator())
 			ax3.xaxis.set_major_locator(MultipleLocator(args.x_step_width))
+			ax3.xaxis.set_minor_locator(AutoMinorLocator())
 
 			for ax in (ax1,ax2,ax3):
 				ax.set_yticks(()) # remove yticks
 				ax.set_xlim(lims) # set x axis limits 
 			
-			ax1.set_xticks(())
+			ax1.tick_params(which='both', bottom=False, top=True, labelbottom=False ,labeltop=False, direction='in')
 			ax2.set_xticks(())
+
+
 
 			# direction of ticks and size of tick labels
 			ax3.xaxis.set_ticks_position('bottom') 
@@ -209,8 +242,10 @@ class PlotPawleyFit: # Should I use a parent class?
 			fig.text(0.5, 0.04, args.x_label_text, fontsize=args.size_axis_labels, va='top', ha='center') # add ylabel
 
 
+		v1,v3 = self.get_vertical_proportions(data) # vertical scaling of ax1 and ax3 so that they have the same absolute scales.
+
 		fig = plt.figure(figsize=args.plot_size)  # create canvas.
-		gs = gridspec.GridSpec(3, 1, height_ratios=[8, 1, 2]) # make stacked multiplot for exp+cal // pos // dif
+		gs = gridspec.GridSpec(3, 1, height_ratios=[v1, 1, v3]) # make stacked multiplot for exp+cal // pos // dif
 
 		# attribute subplots to variables.
 		ax1 = plt.subplot(gs[0]) # exp+cal
@@ -239,23 +274,71 @@ class PlotPawleyFit: # Should I use a parent class?
 					 args.legend_text_pos,
 					 args.legend_text_dif])
 
-		self.axes = (ax1,ax2,ax3)
+		self.gs = gs # return the gs so that it can be modified by the add_multiply method.
+		self.axes = (ax1,ax2,ax3) # make axes values so that they can be called by add_multiply method.
 
 		return self.axes
 
 
-	def add_multiply(self,tups):
+
+	def get_vertical_proportions(self,data):
+
+			'''Determines the vertical proportions of the calc/exp axes and the diff axes so that they have the same absolute scale per pixel.'''
+
+			min_1 = min(data['exp'][1].min(),data['cal'][1].min())
+			max_1 = max(data['exp'][1].max(),data['cal'][1].max())
+			min_3,max_3 = data['dif'][1].min(),data['dif'][1].max()
+
+			d1 = max_1 - min_1
+			d3 = max_3 - min_3
+
+			r = d3/d1
+
+			v3 = 9*r
+			v1 = 9-v3
+
+			return v1,v3
+
+
+	def add_multiply(self,mults):
 
 		'''Add multiplication vlines.'''
 
+		def multiply(line,a,b,m):
 		
+			'''Actually multiplies the values of a line by m in the range between a and b.'''
 
+			x,y = line.get_data() # data for exp vals in ax1
+			mask = np.where((a<=x) & (x<=b)) # find out where x is bigger than a and smaller than b
+			y[mask] *= m
+			line.set_data(x,y)
+			
+		for mul in mults:
+			a,b,m = mul # get mul vals
+			exp = self.axes[0].lines[0]
+			cal = self.axes[0].lines[1]
+			dif = self.axes[2].lines[0]
 
+			for line in (exp,cal,dif):
+				multiply(line,a,b,m)
+			
+			# update data dict after multiplying values.
+			self.data['exp'][1] = exp.get_data()[1]
+			self.data['cal'][1] = cal.get_data()[1]
+			self.data['dif'][1] = dif.get_data()[1]
 
-		for ax in self.axes: # add the vlines
-			ax.axvline(10,-100,100, ls=args.vline_style, lw=args.vline_strength, color='k')
+			for ax in self.axes:
+				ax.axvline(a, ls=args.vline_style, lw=args.vline_strength, color='k')
+				ax.axvline(b, ls=args.vline_style, lw=args.vline_strength, color='k')
+			
+			l,h = self.axes[0].get_ylim()
+			self.axes[0].text(a,h*0.95,r'$\times%s$'%m, va='top', ha='left')
 
+		v1,v3 = self.get_vertical_proportions(self.data)
+		self.gs.set_height_ratios([v1,1,v3])
 
+		for ax in self.axes:
+			ax.autoscale(axis='y')
 
 
 
@@ -274,18 +357,17 @@ for entry in files_dict:
 	plot_obj = PlotPawleyFit(data) # create plot object.
 	plot_obj.plot() # call the plot method.
 
+	# add a multiplication line if args.mult != None.
+	if args.multi_range:
+		mults = process_multiplication_tuples(args.multi_range) # check here if mult provided fulfils format requirements.
+		plot_obj.add_multiply(mults)
+
 	# run silent or open window bases on args.
 	filename = entry+'.'+args.extension
 	if args.silent:
 		plt.savefig(filename,dpi=args.dots_per_inch ,bbox_inches='tight', transparent=True)
 	else:
 		plt.show()
-
-	# add a multiplication line if args.mult != None.
-	if args.multi_range:
-		# check here if mult provided fulfils format requirements.
-		print(args.multi_range)
-		plot_obj.add_multiply(args.multi_range)
 
 	plt.clf() # close figure after processing to free up memory.
 
